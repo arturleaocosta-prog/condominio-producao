@@ -1,0 +1,2 @@
+@supabase/supabase-js 2.117.3 (MIT), build UMD copiado do pacote npm oficial.
+Arquivo: vendor/supabase.js
