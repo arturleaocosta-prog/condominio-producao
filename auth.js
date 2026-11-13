@@ -177,7 +177,7 @@
     const nc = $('navconvites'); if (nc) nc.classList.toggle('hide', role !== 'sindico');
     document.querySelectorAll('[data-page="boletos"]').forEach(b => b.classList.toggle('hide', role !== 'sindico'));   // boletos (teste): só o síndico; a cobrança por unidade é de todos (cada perfil vê o que lhe cabe)
     const sf = document.querySelector('.sidefoot');
-    if (sf) sf.innerHTML = esc(APP.perfil.nome) + '<br>Versão 1.15.0 · fase de testes';
+    if (sf) sf.innerHTML = esc(APP.perfil.nome) + '<br>Versão 1.16.1 · fase de testes';
     render();
   }
 
@@ -190,7 +190,7 @@
     if (role !== 'sindico') document.querySelectorAll('[data-go="boletos"]').forEach(e => e.remove());
     if (page !== 'convites') APP.ultimoConvite = null;
     const c = $('content');
-    if (!['reservas', 'convites', 'menu', 'financeiro'].includes(page)) {
+    if (!['reservas', 'convites', 'menu', 'financeiro', 'dashboard'].includes(page)) {
       c.insertAdjacentHTML('afterbegin', '<div class="notice">Este módulo ainda é uma demonstração: os dados são fictícios e não são salvos.</div>');
     }
     if (page === 'reservas') bindVaga();

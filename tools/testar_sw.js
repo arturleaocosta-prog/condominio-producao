@@ -1,4 +1,5 @@
 /* Teste da lógica do service worker (sw.js) com um navegador falso: rede primeiro, offline, isolamento e instalação sem cache HTTP. Uso: node tools/testar_sw.js */
+const ATUAL = (require('fs').readFileSync(require('path').join(__dirname, '..', 'sw.js'), 'utf8').match(/CACHE='([^']+)'/) || [])[1];
 const fs = require('fs'), vm = require('vm'), path = require('path');
 let ok = 0, bad = 0; const falhas = [];
 const check = (n, c, i) => { if (c) ok++; else { bad++; falhas.push(n + (i ? ' → ' + i : '')); } };
@@ -28,18 +29,18 @@ function carrega({ rede = true, versaoRede = 'NOVO', cacheInicial = {} } = {}) {
     check('instalação: todos os arquivos do app são pré-carregados', add && add.addAll.length >= 10);
     check('instalação ignora o cache HTTP (cache: reload) em TODOS os arquivos', add && add.addAll.every(a => a.cache === 'reload'));
     check('instalação ativa a nova versão sem esperar (skipWaiting)', s.chamadas.includes('skipWaiting')); }
-  { const s = carrega({ cacheInicial: { 'condominio-shell-v1-8-1': { 'x': 'velho' }, 'condominio-shell-v1-12-1': { 'y': 'atual' } } });
+  { const s = carrega({ cacheInicial: { 'condominio-shell-v1-8-1': { 'x': 'velho' }, [ATUAL]: { 'y': 'atual' } } });
     const e = { waitUntil: p => { s.p = p; } }; s.handlers.activate(e); await s.p; await flush();
-    check('ativação apaga os caches de versões antigas e mantém o atual', !s.caches.has('condominio-shell-v1-8-1') && s.caches.has('condominio-shell-v1-12-1'));
+    check('ativação apaga os caches de versões antigas e mantém o atual', !s.caches.has('condominio-shell-v1-8-1') && s.caches.has(ATUAL));
     check('ativação assume as abas abertas (claim)', s.chamadas.includes('claim')); }
   { // rede primeiro: com cache VELHO e rede disponível, entrega a versão NOVA e atualiza o cache
-    const s = carrega({ cacheInicial: { 'condominio-shell-v1-12-1': { 'https://app.test/Sistema/index.html': 'VELHO:index' } } });
+    const s = carrega({ cacheInicial: { [ATUAL]: { 'https://app.test/Sistema/index.html': 'VELHO:index' } } });
     const g = s.get('https://app.test/Sistema/index.html'); const r = await g.resp(); await flush();
     check('rede disponível: entrega a versão NOVA mesmo com versão velha no cache', r.corpo.startsWith('NOVO:'), r.corpo);
     check('a busca na rede revalida (cache: no-cache)', s.chamadas.some(c => c.fetch && c.cache === 'no-cache'));
-    check('o cache é atualizado com a versão nova', s.caches.get('condominio-shell-v1-12-1').get('https://app.test/Sistema/index.html').corpo.startsWith('NOVO:')); }
+    check('o cache é atualizado com a versão nova', s.caches.get(ATUAL).get('https://app.test/Sistema/index.html').corpo.startsWith('NOVO:')); }
   { // offline
-    const s = carrega({ rede: false, cacheInicial: { 'condominio-shell-v1-12-1': { 'https://app.test/Sistema/auth.js': 'CACHE:auth', 'https://app.test/Sistema/index.html': 'CACHE:index' } } });
+    const s = carrega({ rede: false, cacheInicial: { [ATUAL]: { 'https://app.test/Sistema/auth.js': 'CACHE:auth', 'https://app.test/Sistema/index.html': 'CACHE:index' } } });
     const a = await s.get('https://app.test/Sistema/auth.js').resp(); check('sem rede: serve o arquivo do cache', a.corpo === 'CACHE:auth');
     const n = await s.get('https://app.test/Sistema/qualquer-rota').resp(); check('sem rede e rota desconhecida: cai no index.html', n.corpo === 'CACHE:index'); }
   { // o que NUNCA passa pelo service worker

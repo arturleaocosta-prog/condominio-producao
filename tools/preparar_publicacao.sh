@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 rm -rf publicar && mkdir -p publicar/icons publicar/vendor
-cp index.html auth.js caixa.js ofx.js extrato.js cobranca-ui.js config.js cobranca.js boleto.js sw.js manifest.webmanifest publicar/
+cp index.html auth.js caixa.js ofx.js extrato.js cobranca-ui.js dashboard-fin.js config.js cobranca.js boleto.js sw.js manifest.webmanifest publicar/
 cp icons/* publicar/icons/
 cp vendor/supabase.js vendor/LICENSE-supabase-js.txt publicar/vendor/
 # o index.html tenta carregar data/financeiro.js; sem o arquivo o app segue normalmente (onerror)

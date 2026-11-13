@@ -18,7 +18,7 @@ function novoMundo() {
   return {
     users: [], session: null, chamadas: [], falhaRede: false,
     lancamentos: [], ciclos: [], cobrancas: [], itensc: [], previstos: [], previsoes: [], cpag: [], extratos: [], extlinhas: [], regras: [], comprovantes: [], historico: [], storage: {}, falhaUpload: false, perfis: [], unidades: [{ id: U101, identificacao: '101', fracao_ideal: 0.6, ativa: true }, { id: U102, identificacao: '102', fracao_ideal: 0.4, ativa: true }],
-    vinculos: [], avisos: [], convites: [], seq: 1
+    vinculos: [], avisos: [], convites: [], dashboards_financeiros: [], dashExtrato: {}, seq: 1
   };
 }
 function fakeClient(w) {
@@ -51,6 +51,7 @@ function fakeClient(w) {
     const dados = w[q.tabela]; if (!dados) return res(null, erro('tabela inexistente: ' + q.tabela));
     const casa = r => q.filtros.every(([t, c, v]) => t === 'eq' ? r[c] === v : t === 'in' ? v.includes(r[c]) : t === 'lt' ? String(r[c]) < String(v) : t === 'lte' ? String(r[c]) <= String(v) : String(r[c]) >= String(v));
     const eu = w.session && w.session.user, perfilEu = eu && w.perfis.find(p => p.user_id === eu.id), ehMorador = perfilEu && perfilEu.papel === 'morador';
+    if (q.tabela === 'dashboards_financeiros' && q.op === 'select' && ehMorador) return res(dados.filter(r => r.visivel_moradores).filter(casa));   // RLS do banco
     if (q.op === 'delete') { const alvo = dados.filter(casa); alvo.forEach(r => dados.splice(dados.indexOf(r), 1)); return res(null); }
     if (q.op === 'insert') {
       const r = Object.assign({ id: 'id-' + (w.seq++), status: 'ativo' }, q.payload);
@@ -115,6 +116,7 @@ function fakeClient(w) {
         if (c.unidade_id) w.vinculos.push({ user_id: eu.id, unidade_id: c.unidade_id, ativo: true });
         return res({ papel: c.papel });
       }
+      if (['dashboard_financeiro', 'salvar_dashboard_financeiro', 'excluir_dashboard_financeiro', 'registrar_saldo_extrato'].includes(nome)) return rpcDash(w, nome, args, perfil);
       if (['registrar_lancamento', 'estornar_lancamento', 'resumo_financeiro', 'relatorio_mensal', 'editar_lancamento', 'registrar_comprovante', 'remover_comprovante', 'saldo_livro_em', 'importar_extrato'].includes(nome)) return rpcCaixa(w, nome, args, perfil);
       if (['gerar_cobranca_mensal', 'validar_cobranca_mensal', 'liberar_cobranca_mensal', 'reabrir_cobranca_mensal', 'registrar_pagamento_cobranca', 'remover_pagamento_cobranca', 'cobrancas_em_aberto'].includes(nome)) return rpcCobranca(w, nome, args, perfil);
       return res(null, erro('rpc desconhecida'));
@@ -263,6 +265,44 @@ function rpcCobranca(w, nome, args, perfil) {
   return res(null, erro('rpc desconhecida'));
 }
 
+/* dashboard financeiro: 12 meses fixos (jul/26–jun/27) com saldo inicial 9.370,02; extrato informado define o status */
+function rpcDash(w, nome, args, perfil) {
+  const res = (data, error) => ({ data: data === undefined ? null : data, error: error || null }), erro = m => ({ message: m });
+  if (!perfil) return res(null, erro('Autenticação necessária'));
+  const adm = perfil.papel === 'sindico';
+  if (nome === 'salvar_dashboard_financeiro') {
+    if (!adm) return res(null, erro('Só o síndico pode criar ou editar o dashboard'));
+    let d = args.p_id && w.dashboards_financeiros.find(x => x.id === args.p_id);
+    if (!d) { d = { id: 'dash-' + (w.seq++), criado_por: perfil.user_id }; w.dashboards_financeiros.push(d); }
+    Object.assign(d, { titulo: args.p_titulo, mes_inicio: args.p_mes_inicio, mes_fim: args.p_mes_fim, visivel_moradores: args.p_visivel_moradores, observacao: args.p_observacao, atualizado_em: new Date().toISOString() });
+    return res(d.id);
+  }
+  if (nome === 'excluir_dashboard_financeiro') {
+    if (!adm) return res(null, erro('Só o síndico pode excluir o dashboard'));
+    const i = w.dashboards_financeiros.findIndex(x => x.id === args.p_id); if (i < 0) return res(null, erro('Dashboard não encontrado'));
+    w.dashboards_financeiros.splice(i, 1); return res(null);
+  }
+  const calc = mes => { const n = (Number(mes.slice(0, 4)) - 2026) * 12 + Number(mes.slice(5, 7)) - 7; return [448364, 562326, 324757, 400970][Math.min(Math.max(n, 0), 3)]; };
+  if (nome === 'registrar_saldo_extrato') {
+    if (!adm) return res(null, erro('Só o síndico pode informar o saldo do extrato'));
+    const mes = args.p_competencia.slice(0, 7); w.dashExtrato[mes] = args.p_saldo_extrato_centavos;
+    const st = args.p_saldo_extrato_centavos == null ? 'pendente' : args.p_saldo_extrato_centavos === calc(mes) ? 'conciliado' : 'divergente';
+    return res({ mes, status: st, saldo_calculado_centavos: calc(mes), saldo_extrato_centavos: args.p_saldo_extrato_centavos, diferenca_centavos: args.p_saldo_extrato_centavos == null ? null : calc(mes) - args.p_saldo_extrato_centavos });
+  }
+  const d = w.dashboards_financeiros.find(x => x.id === args.p_id);
+  if (!d || (perfil.papel === 'morador' && !d.visivel_moradores)) return res(null, erro('Dashboard não encontrado'));
+  const E = [980906, 1062075, 715406, 1063911], S = [1469544, 948113, 952975, 987698], meses = [];
+  let ini = 937002;
+  for (let i = 0; i < 12; i++) {
+    const a = 2026 + Math.floor((6 + i) / 12), mm = String((6 + i) % 12 + 1).padStart(2, '0'), mes = a + '-' + mm, e = E[i] || 0, sa = S[i] || 0, fim = ini + e - sa, ex = w.dashExtrato[mes];
+    meses.push({ mes, saldo_inicial_centavos: ini, entradas_centavos: e, saidas_centavos: sa, saldo_final_centavos: fim, quantidade: e ? 9 : 0, saldo_extrato_centavos: ex == null ? null : ex, status: ex == null ? 'pendente' : ex === fim ? 'conciliado' : 'divergente' });
+    ini = fim;
+  }
+  const soma = f => meses.reduce((t, m) => t + m[f], 0);
+  return res({ id: d.id, titulo: d.titulo, mes_inicio: '2026-07', mes_fim: '2027-06', visivel_moradores: d.visivel_moradores, observacao: d.observacao, meses,
+    totais: { entradas_centavos: soma('entradas_centavos'), saidas_centavos: soma('saidas_centavos'), resultado_centavos: soma('entradas_centavos') - soma('saidas_centavos'), conciliados: meses.filter(m => m.status === 'conciliado').length, meses: 12 } });
+}
+
 /* ---------- carrega o app ---------- */
 async function abrir(mundo, { configurado = true } = {}) {
   let html = read('index.html');
@@ -278,6 +318,7 @@ async function abrir(mundo, { configurado = true } = {}) {
   troca('<script src="./caixa.js"></script>', inline('caixa.js'));
   troca('<script src="./extrato.js"></script>', inline('extrato.js'));
   troca('<script src="./cobranca-ui.js"></script>', inline('cobranca-ui.js'));
+  troca('<script src="./dashboard-fin.js"></script>', inline('dashboard-fin.js'));
   const { VirtualConsole } = require('jsdom'); const vc = new VirtualConsole(); vc.on('jsdomError', e => { if (!/Not implemented/.test(e.message)) console.error('[página]', e.message.split('\n')[0]); });
   const dom = new JSDOM(html, { virtualConsole: vc,
     url: 'https://app.test/condominio/', runScripts: 'dangerously', pretendToBeVisual: true,
@@ -357,7 +398,7 @@ function logado(mundo, email, papel, { unidade = null, ativo = true, comPerfil =
     check('seletor de perfil de demonstração some após o login', w.document.getElementById('role').classList.contains('hide'));
     check('botão Sair aparece', !!w.document.getElementById('btnsair'));
     check('morador não vê o item Convites', w.document.getElementById('navconvites').classList.contains('hide'));
-    check('rodapé mostra o nome do usuário e a versão', /novo/.test(w.document.querySelector('.sidefoot').textContent) && /1\.15/.test(w.document.querySelector('.sidefoot').textContent));
+    check('rodapé mostra o nome do usuário e a versão', /novo/.test(w.document.querySelector('.sidefoot').textContent) && /1\.16/.test(w.document.querySelector('.sidefoot').textContent));
     w.close();
   }
   /* 4. perfil desativado / falha de rede */
@@ -907,6 +948,71 @@ function logado(mundo, email, papel, { unidade = null, ativo = true, comPerfil =
     { const c = w.document.getElementById('content').textContent; check('demo: Início mantém os números fictícios de demonstração', true); }
     check('demo: Financeiro mantém os dados fictícios e o botão de demonstração', /valores exibidos são fictícios/.test(txt(w)) && !!w.document.getElementById('newentry') && !w.document.getElementById('cx-mes'));
     w.close();
+  }
+
+  /* 13. dashboard financeiro (V1.16): síndico cria/edita/concilia; conselho e morador só visualizam */
+  {
+    const mundoDash = papel => { const m = novoMundo(); logado(m, papel + '@a.com', papel, { unidade: papel === 'morador' ? U101 : null });
+      m.dashboards_financeiros.push({ id: 'dash-1', titulo: 'Conciliação bancária – Edifício Valença – Jul/2026 a Jun/2027', mes_inicio: '2026-07-01', mes_fim: '2027-06-01', visivel_moradores: true, observacao: null });
+      m.dashExtrato = { '2026-07': 448364, '2026-08': 562326, '2026-09': 324757, '2026-10': 400970 }; return m; };
+    { // síndico
+      const m = mundoDash('sindico'), w = await abrir(m), c = () => txt(w);
+      check('dashboard: não fica no menu nem no Início (só dentro do Financeiro)', !w.document.querySelector('[data-page="dashboard"]') && !w.document.querySelector('[data-go="dashboard"]'));
+      await irPara(w, 'financeiro'); await wait(60);
+      check('financeiro: abas Livro-caixa e Dashboard abaixo do título', !!w.document.querySelector('#content .df-abas [data-df-aba="dashboard"]') && w.document.querySelector('#content .df-abas .on').dataset.dfAba === 'financeiro');
+      await clica(w, w.document.querySelector('[data-df-aba="dashboard"]')); await wait(60);
+      check('aba Dashboard: título Financeiro, aba marcada e item Financeiro do menu destacado', /Financeiro/.test(w.document.querySelector('#content .heading h1').textContent) && w.document.querySelector('#content .df-abas .on').dataset.dfAba === 'dashboard' && w.document.querySelector('aside [data-page="financeiro"]').classList.contains('active'));
+      check('dashboard/síndico: abre direto com os valores (sem cadeado)', /CONCILIAÇÃO BANCÁRIA|Conciliação bancária – Edifício Valença/i.test(c()) && !/estão ocultos/.test(c()), c().slice(0, 300));
+      check('dashboard/síndico: sem aviso de módulo de demonstração', !/ainda é uma demonstração/.test(c()));
+      check('dashboard/síndico: tabela com jul/2026 e totais do PDF', /Jul-2026/.test(c()) && /9\.370,02/.test(c()) && /38\.222,98/.test(c()) && /43\.583,30/.test(c()) && /\(R\$\s?5\.360,32\)/.test(c()) && /4 de 12/.test(c()), c().slice(0, 900));
+      check('dashboard/síndico: 4 conciliados e 8 pendentes', (c().match(/✔ Conciliado/g) || []).length === 4 && (c().match(/⚠ Pendente/g) || []).length === 8);
+      check('dashboard/síndico: dois gráficos (barras e saldo)', w.document.querySelectorAll('.df-graf svg').length === 2 && w.document.querySelectorAll('.df-graf svg path[fill="#2a78d6"]').length === 4);
+      const alvo = w.document.querySelector('.df-graf[data-df-graf="barras"] .df-alvo[data-i="3"]'); await clica(w, alvo);
+      check('dashboard: tocar no mês mostra o detalhe (tooltip)', /Out-2026/.test(w.document.querySelector('.df-graf .df-tip').textContent) && /10\.639,11/.test(w.document.querySelector('.df-graf .df-tip').textContent));
+      check('dashboard/síndico: tem Novo, Editar, Excluir e Informar extrato', !!w.document.getElementById('df-novo') && !!w.document.getElementById('df-editar') && !!w.document.getElementById('df-excluir') && w.document.querySelectorAll('[data-df-extrato]').length >= 4);
+      // extrato divergente
+      await clica(w, w.document.querySelector('[data-df-extrato="2026-10"]'));
+      await preencheESubmete(w, 'df-fx', { 'df-sx': '4.000,00' }); await wait(60);
+      check('dashboard/síndico: extrato diferente → divergente com aviso', /✖ Divergente/.test(c()) && /difere do saldo calculado em R\$\s?9,70/.test(c()), c().slice(0, 400));
+      check('dashboard: registrar extrato chama a função do banco', m.chamadas.some(x => x.rpc === 'registrar_saldo_extrato' && x.args.p_competencia === '2026-10-01' && x.args.p_saldo_extrato_centavos === 400000));
+      await clica(w, w.document.querySelector('[data-df-extrato="2026-10"]')); await preencheESubmete(w, 'df-fx', { 'df-sx': '4.009,70' }); await wait(60);
+      check('dashboard/síndico: corrigir o extrato → conciliado de novo', (c().match(/✔ Conciliado/g) || []).length === 4 && !/Divergente/.test(c()));
+      // novo dashboard
+      await clica(w, w.document.getElementById('df-novo'));
+      check('dashboard/síndico: formulário sugere o exercício julho–junho', /^\d{4}-07$/.test(w.document.getElementById('df-ini').value) && /^\d{4}-06$/.test(w.document.getElementById('df-fim').value));
+      await preencheESubmete(w, 'df-f', { 'df-tit': 'Exercício 2027/2028', 'df-ini': '2027-07', 'df-fim': '2028-06' }); await wait(60);
+      check('dashboard/síndico: cria pelo banco e passa a ter seletor de período', m.dashboards_financeiros.length === 2 && m.chamadas.some(x => x.rpc === 'salvar_dashboard_financeiro' && x.args.p_mes_inicio === '2027-07-01') && !!w.document.getElementById('df-sel'));
+      // voltar (celular): da aba para o Início, sem sair do app
+      w.eval("go('inicio')"); await wait(60);
+      await irPara(w, 'avisos'); await irPara(w, 'financeiro'); await clica(w, w.document.querySelector('[data-df-aba="dashboard"]')); await wait(40);
+      check('voltar: abrir abas não empilha histórico (uma entrada só)', w.history.length === 2 && w.history.state && w.history.state.aba === 'dashboard', String(w.history.length));
+      await clica(w, w.document.querySelector('[data-df-extrato="2026-10"]'));
+      w.history.back(); await wait(80);
+      check('voltar com janela aberta: fecha a janela e continua na aba', !w.document.querySelector('.modal') && !!w.document.querySelector('.df-faixa') && w.eval('page') === 'dashboard');
+      w.history.back(); await wait(80);
+      check('voltar na aba: vai para a tela inicial do app', w.eval('page') === 'inicio' && /Bom dia/.test(c()));
+      await irPara(w, 'financeiro'); await irPara(w, 'inicio'); await wait(80);
+      check('tocar em Início desfaz a entrada da aba (próximo voltar sai do app)', w.eval('page') === 'inicio' && !(w.history.state && w.history.state.aba));
+      w.close();
+    }
+    for (const papel of ['conselho', 'morador']) {
+      const m = mundoDash(papel), w = await abrir(m), c = () => txt(w), P = 'dashboard/' + papel + ': ';
+      await irPara(w, 'financeiro'); await clica(w, w.document.querySelector('[data-df-aba="dashboard"]')); await wait(40);
+      check(P + 'abre com valores ocultos', /valores do dashboard estão ocultos/.test(c()) && !/38\.222,98/.test(c()) && !m.chamadas.some(x => x.rpc === 'dashboard_financeiro'));
+      await clica(w, w.document.getElementById('df-mostrar')); await wait(60);
+      check(P + 'mostra os valores ao pedir', /38\.222,98/.test(c()) && /4 de 12/.test(c()));
+      await clica(w, w.document.querySelector('[data-df-aba="financeiro"]')); await wait(40);
+      check(P + 'aba Livro-caixa volta ao livro-caixa (com cadeado do Financeiro)', w.eval('page') === 'financeiro' && /valores financeiros estão ocultos/.test(c()));
+      await clica(w, w.document.querySelector('[data-df-aba="dashboard"]')); await wait(40);
+      check(P + 'somente leitura (sem Novo, Editar, Excluir nem extrato)', !w.document.getElementById('df-novo') && !w.document.getElementById('df-editar') && !w.document.getElementById('df-excluir') && !w.document.querySelector('[data-df-extrato]'));
+      w.close();
+    }
+    { const m = mundoDash('morador'); m.dashboards_financeiros[0].visivel_moradores = false; const w = await abrir(m);
+      await irPara(w, 'financeiro'); await clica(w, w.document.querySelector('[data-df-aba="dashboard"]')); await clica(w, w.document.getElementById('df-mostrar')); await wait(60);
+      check('dashboard/morador: dashboard oculto aos moradores não aparece', /ainda não publicou/.test(txt(w)) && !/38\.222,98/.test(txt(w))); w.close(); }
+    { const w = await abrir(novoMundo(), { configurado: false });
+      w.eval('window.FINANCEIRO_DATA = ' + read('data/financeiro.json').replace(/<\/script/gi, '') + '; page="dashboard"; render();'); await wait(60);
+      check('dashboard/demonstração: usa as planilhas, mostra 4 conciliados, sem edição', /4 de 12/.test(txt(w)) && /38\.222,98/.test(txt(w)) && !w.document.getElementById('df-novo'), txt(w).slice(0, 300)); w.close(); }
   }
 
   console.log(falhas.length ? 'FALHAS:\n - ' + falhas.join('\n - ') : '');

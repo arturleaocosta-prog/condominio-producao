@@ -1,3 +1,7 @@
+> **V1.16.1** — Dashboard financeiro como aba do Financeiro (conciliação bancária do exercício; só o síndico cria e edita) e botão voltar do celular levando à tela inicial. Veja `docs/DASHBOARD_FINANCEIRO_V1_16.md`.
+
+> **Dados atualizados em 13/11/2026** — fechamento de outubro (conciliado, saldo R$ 4.009,70) e previsão de novembro/2026. Veja `docs/ATUALIZAR_DADOS_OUT_NOV_2026.md`.
+
 > **V1.11.0** — login por convite, Convites, Vaga de visitante, Financeiro (livro-caixa) com saldo de abertura e importação de jul–set/2026. Leia `docs/IMPLANTACAO_LOGIN_CONVITES.md` e `docs/TESTE_MANUAL_PROJETO_TESTE.md` antes de publicar.
 
 # Aplicativo de gestão condominial — V1.8.1 (PWA + financeiro + cobrança mensal + boletos de teste)
